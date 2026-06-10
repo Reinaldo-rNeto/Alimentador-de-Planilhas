@@ -1,0 +1,24 @@
+# Credenciais OAuth — NUNCA commitar
+credentials.json
+client_secret_*.json
+token.json
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Downloads temporários
+Downloads/
+
+# Planilhas de teste locais
+*.xlsx
+*.xls
+
+# Configs locais
+.env
