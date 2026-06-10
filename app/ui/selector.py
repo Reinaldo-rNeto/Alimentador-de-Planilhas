@@ -152,9 +152,21 @@ class SelectorScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _is_authenticated(self) -> bool:
-        from pathlib import Path
-        token = Path.home() / ".alimentador_planilha" / "token.json"
-        return token.exists()
+        """Verifica se o serviço Drive está ativo (não só se o token existe)."""
+        return self.drive_manager is not None and self.drive_manager.esta_autenticado()
+
+    def atualizar_estado_drive(self):
+        """Chamado pelo App quando o Drive foi restaurado automaticamente em background."""
+        if not self._is_authenticated():
+            return
+        try:
+            usuario = self.drive_manager.get_usuario()
+            self.btn_connect.configure(text="✓ Conectado — Sair",
+                                       fg_color="#1B5E20", state="normal")
+            self.label_user.configure(text=f"Conta: {usuario}")
+            self._search_drive()
+        except Exception:
+            pass
 
     def _browse_local(self):
         path = filedialog.askopenfilename(
@@ -204,8 +216,11 @@ class SelectorScreen(ctk.CTkFrame):
         if self._is_authenticated():
             if messagebox.askyesno("Desconectar", "Deseja sair da conta Google?"):
                 self.drive_manager.desconectar()
-                self.btn_connect.configure(text="Conectar ao Drive", fg_color="#B71C1C")
+                self.btn_connect.configure(text="Conectar ao Drive",
+                                           fg_color="#B71C1C", state="normal")
                 self.label_user.configure(text="")
+                for w in self.drive_list.winfo_children():
+                    w.destroy()
             return
 
         self.btn_connect.configure(
@@ -260,8 +275,11 @@ class SelectorScreen(ctk.CTkFrame):
         query = self.drive_search.get().strip()
 
         def _fetch():
-            files = self.drive_manager.listar_planilhas(query)
-            self.after(0, lambda: self._mostrar_drive_files(files))
+            try:
+                files = self.drive_manager.listar_planilhas(query)
+                self.after(0, lambda: self._mostrar_drive_files(files))
+            except Exception as e:
+                self.after(0, lambda: self._on_drive_error(str(e)))
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -286,6 +304,20 @@ class SelectorScreen(ctk.CTkFrame):
             )
             btn.grid(row=i, column=0, sticky="ew", padx=4, pady=2)
 
+    def _on_drive_error(self, msg: str):
+        """Trata erros de Drive — se for desconexão, reseta o estado visual."""
+        from app.drive_manager import DriveDesconectadoError
+        if not self.drive_manager or not self.drive_manager.esta_autenticado():
+            self.btn_connect.configure(text="Conectar ao Drive",
+                                       fg_color="#B71C1C", state="normal")
+            self.label_user.configure(text="")
+            messagebox.showerror(
+                "Sessão Drive encerrada",
+                f"{msg}\n\nConecte ao Drive novamente para continuar.",
+            )
+        else:
+            messagebox.showerror("Erro no Drive", msg)
+
     def _selecionar_drive(self, file_id: str, name: str, mime: str):
         self._selected_drive_file = {"id": file_id, "name": name, "mimeType": mime}
         self.entry_local.delete(0, "end")
@@ -295,7 +327,7 @@ class SelectorScreen(ctk.CTkFrame):
                 tmp_path = self.drive_manager.download_para_temp(file_id, mime)
                 self.after(0, lambda: self._carregar_abas_drive(tmp_path, name))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Erro", str(e)))
+                self.after(0, lambda: self._on_drive_error(str(e)))
 
         threading.Thread(target=_download, daemon=True).start()
 
@@ -304,20 +336,29 @@ class SelectorScreen(ctk.CTkFrame):
             from app.sheet_manager import SheetManager
             sm = SheetManager(tmp_path)
             abas = sm.get_sheet_names()
+            if not abas:
+                messagebox.showerror("Erro", "Nenhuma aba encontrada na planilha.")
+                return
             self._sheet_manager = sm
             self.combo_aba.configure(values=abas, state="readonly")
             self.combo_aba.set(abas[0])
             self.btn_abrir.configure(state="normal")
         except Exception as e:
-            messagebox.showerror("Erro", str(e))
+            messagebox.showerror("Erro ao carregar planilha",
+                                 f"Não foi possível ler o arquivo:\n\n{e}")
 
     def _abrir(self):
         aba = self.combo_aba.get()
         if not self._sheet_manager:
+            messagebox.showwarning("Atenção", "Nenhum arquivo selecionado.")
             return
-        self._sheet_manager.load(aba)
-        self._salvar_ultimo(self._sheet_manager.filepath, aba)
-        self.on_file_selected(self._sheet_manager, self._selected_drive_file)
+        try:
+            self._sheet_manager.load(aba)
+            self._salvar_ultimo(self._sheet_manager.filepath, aba)
+            self.on_file_selected(self._sheet_manager, self._selected_drive_file)
+        except Exception as e:
+            messagebox.showerror("Erro ao abrir planilha",
+                                 f"Não foi possível abrir a aba '{aba}':\n\n{e}")
 
     def _restaurar_ultimo(self):
         config = self._load_config()

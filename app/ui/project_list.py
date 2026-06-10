@@ -23,15 +23,22 @@ class ProjectListScreen(ctk.CTkFrame):
 
     def __init__(self, master, sheet_manager: SheetManager,
                  on_edit, on_new, on_obs, on_sync,
-                 on_trocar_arquivo, on_nova_secao=None, **kwargs):
+                 on_voltar, on_nova_secao=None,
+                 drive_manager=None, on_desconectar_drive=None,
+                 # legado — mantido para compatibilidade
+                 on_trocar_arquivo=None,
+                 **kwargs):
         super().__init__(master, **kwargs)
         self.sm = sheet_manager
+        self.drive_manager = drive_manager
         self.on_edit = on_edit
         self.on_new = on_new
         self.on_obs = on_obs
         self.on_sync = on_sync
-        self.on_trocar_arquivo = on_trocar_arquivo
+        self.on_voltar = on_voltar
+        self.on_trocar_arquivo = on_voltar  # mesmo que voltar
         self.on_nova_secao = on_nova_secao
+        self.on_desconectar_drive = on_desconectar_drive
         self._all_projects: list[Projeto] = []
         self._filtered: list[Projeto] = []
         self._selected_proj: Projeto = None
@@ -59,10 +66,13 @@ class ProjectListScreen(ctk.CTkFrame):
         top.grid(row=0, column=0, sticky="ew")
         top.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(
-            top, text="Alimentador de Planilha",
-            font=ctk.CTkFont(size=16, weight="bold"), text_color="#CDD6F4",
-        ).grid(row=0, column=0, padx=16, pady=12, sticky="w")
+        # Botão Voltar
+        ctk.CTkButton(
+            top, text="← Voltar",
+            fg_color="transparent", hover_color="#313244",
+            text_color="#CDD6F4", border_width=1, border_color="#45475A",
+            command=self.on_voltar, width=90, height=30,
+        ).grid(row=0, column=0, padx=(12, 4), pady=12, sticky="w")
 
         nome = self.sm.filepath.replace("\\", "/").split("/")[-1]
         self.label_arquivo = ctk.CTkLabel(
@@ -72,19 +82,42 @@ class ProjectListScreen(ctk.CTkFrame):
         self.label_arquivo.grid(row=0, column=1, padx=8, pady=12)
 
         btn_frame = ctk.CTkFrame(top, fg_color="transparent")
-        btn_frame.grid(row=0, column=2, padx=16, pady=8)
+        btn_frame.grid(row=0, column=2, padx=12, pady=8)
 
         ctk.CTkButton(
             btn_frame, text="☁ Sincronizar",
             fg_color="#1565C0", hover_color="#0D47A1",
-            command=self.on_sync, width=120, height=32,
-        ).pack(side="left", padx=4)
+            command=self.on_sync, width=110, height=30,
+        ).pack(side="left", padx=3)
 
-        ctk.CTkButton(
-            btn_frame, text="⇄ Trocar arquivo",
-            fg_color="#313244", hover_color="#45475A",
-            command=self.on_trocar_arquivo, width=130, height=32,
-        ).pack(side="left", padx=4)
+        # Indicador / botão Drive
+        if self.drive_manager and self.drive_manager.esta_autenticado():
+            try:
+                usuario = self.drive_manager.get_usuario()
+            except Exception:
+                usuario = "conectado"
+            ctk.CTkButton(
+                btn_frame,
+                text=f"✓ Drive: {usuario[:20]}",
+                fg_color="#1B5E20", hover_color="#2E7D32",
+                width=180, height=30,
+                command=self._confirmar_desconectar,
+            ).pack(side="left", padx=3)
+        else:
+            ctk.CTkButton(
+                btn_frame, text="Drive desconectado",
+                fg_color="#45475A", hover_color="#45475A",
+                text_color="#6C7086", width=160, height=30,
+                state="disabled",
+            ).pack(side="left", padx=3)
+
+    def _confirmar_desconectar(self):
+        from tkinter import messagebox
+        if messagebox.askyesno("Desconectar Drive",
+                               "Deseja encerrar a conexão com o Google Drive?\n"
+                               "Você voltará para a tela inicial."):
+            if self.on_desconectar_drive:
+                self.on_desconectar_drive()
 
     # ------------------------------------------------------------------ #
     #  Filtros                                                             #
@@ -290,14 +323,19 @@ class ProjectListScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def refresh(self):
-        if self.sm.mode == "generic":
-            self._all_generic = list(self.sm.generic_rows)
-        else:
-            self._all_projects = list(self.sm.projetos)
-            if self.combo_secao:
-                secoes = ["Todas as seções"] + [s.titulo for s in self.sm.secoes]
-                self.combo_secao.configure(values=secoes)
-        self._aplicar_filtros()
+        try:
+            if self.sm.mode == "generic":
+                self._all_generic = list(self.sm.generic_rows)
+            else:
+                self._all_projects = list(self.sm.projetos)
+                if self.combo_secao:
+                    secoes = ["Todas as seções"] + [s.titulo for s in self.sm.secoes]
+                    self.combo_secao.configure(values=secoes)
+            self._aplicar_filtros()
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Erro ao carregar dados",
+                                 f"Não foi possível carregar a planilha:\n\n{e}")
 
     def _aplicar_filtros(self):
         busca = self.entry_busca.get().lower().strip()
