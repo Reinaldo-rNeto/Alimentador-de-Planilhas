@@ -1,4 +1,4 @@
-# Credenciais OAuth — NUNCA commitar
+# Credenciais OAuth — não commitar em repo público
 credentials.json
 client_secret_*.json
 token.json
